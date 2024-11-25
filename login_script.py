@@ -8,7 +8,7 @@ from typing import List, Tuple
 from datetime import datetime
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-# 配置日志
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -18,7 +18,7 @@ logging.basicConfig(
     ]
 )
 
-# 美国主要城市及其经纬度
+# US locations with timezones
 US_LOCATIONS = [
     {
         "city": "New York",
@@ -64,7 +64,7 @@ class TelegramNotifier:
         self.base_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
 
     def send_message(self, message: str) -> dict:
-        """发送消息到Telegram"""
+        """Send message to Telegram"""
         try:
             payload = {
                 "chat_id": self.chat_id,
@@ -75,7 +75,7 @@ class TelegramNotifier:
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
-            logging.error(f"发送Telegram消息失败: {str(e)}")
+            logging.error(f"Failed to send Telegram message: {str(e)}")
             return {"error": str(e)}
 
 class WebHostLoginChecker:
@@ -84,98 +84,77 @@ class WebHostLoginChecker:
         self.login_url = "https://webhostmost.com/login"
         self.dashboard_url = "https://webhostmost.com/clientarea.php"
         
-        # 移动设备配置
-        self.mobile_devices = [
-            "iPhone 12",
-            "iPhone 13",
-            "Pixel 5",
-            "Samsung Galaxy S21",
-            "iPhone 13 Pro Max"
-        ]
-
     def get_random_location(self):
-        """随机选择一个美国地理位置"""
+        """Get a random US location"""
         return random.choice(US_LOCATIONS)
 
-    def get_mobile_device(self):
-        """随机选择一个移动设备配置"""
-        return random.choice(self.mobile_devices)
-
     def get_us_user_agent(self):
-        """生成美国地区的User-Agent"""
-        mobile_os_versions = {
-            "iPhone": ["15_0", "15_1", "15_2", "16_0", "16_1"],
-            "Pixel": ["12", "13"],
-            "Samsung": ["11", "12", "13"]
-        }
+        """Generate a US user agent string"""
+        versions = ["115", "116", "117"]
+        platforms = ["Windows NT 10.0", "Macintosh; Intel Mac OS X 10_15_7"]
         
-        os_version = random.choice(mobile_os_versions["iPhone"])  # 使用iPhone的UA
-        return f"Mozilla/5.0 (iPhone; CPU iPhone OS {os_version} like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1"
+        platform = random.choice(platforms)
+        version = random.choice(versions)
+        
+        return f"Mozilla/5.0 ({platform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{version}.0.0.0 Safari/537.36"
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     def attempt_login(self, page, email: str, password: str, location: dict) -> str:
-        """单次登录尝试"""
+        """Single login attempt"""
         try:
-            # 访问登录页面
+            # Navigate to login page
             page.goto(self.login_url, wait_until="networkidle")
             
-            # 等待并填写登录表单
+            # Wait for and fill login form
             page.wait_for_selector('input[placeholder="Enter email"]', timeout=5000)
             page.get_by_placeholder("Enter email").fill(email)
             page.get_by_placeholder("Password").fill(password)
             
-            # 点击登录按钮并等待响应
+            # Click login button and wait for navigation
             with page.expect_navigation(timeout=10000):
                 page.get_by_role("button", name="Login").click()
 
-            # 检查错误消息
+            # Check for error messages
             error_selector = '.MuiAlert-message'
             if page.is_visible(error_selector):
                 error_text = page.locator(error_selector).inner_text()
-                raise Exception(f"登录错误: {error_text}")
+                raise Exception(f"Login error: {error_text}")
 
-            # 验证是否成功到达仪表板
+            # Verify successful dashboard navigation
             if not page.url.startswith(self.dashboard_url):
-                raise Exception("未能跳转到仪表板页面")
+                raise Exception("Failed to reach dashboard page")
 
-            return f"登录成功 (从 {location['city']}, {location['state']})"
+            return f"Login successful (from {location['city']}, {location['state']})"
 
         except PlaywrightTimeout as e:
-            raise Exception(f"页面响应超时: {str(e)}")
+            raise Exception(f"Page response timeout: {str(e)}")
         except Exception as e:
-            raise Exception(f"登录失败: {str(e)}")
+            raise Exception(f"Login failed: {str(e)}")
 
     def check_login(self, email: str, password: str) -> str:
-        """使用美国地理位置检查登录"""
-        device = self.get_mobile_device()
+        """Check login using US geolocation"""
         location = self.get_random_location()
         user_agent = self.get_us_user_agent()
         
-        logging.info(f"使用设备: {device}")
-        logging.info(f"模拟位置: {location['city']}, {location['state']}")
+        logging.info(f"Simulating location: {location['city']}, {location['state']}")
 
         try:
             with sync_playwright() as p:
-                # 配置浏览器
-                browser = p.firefox.launch(headless=self.headless)
+                # Launch browser (using Chromium instead of Firefox for better compatibility)
+                browser = p.chromium.launch(headless=self.headless)
                 
-                # 创建上下文并配置设备
+                # Create context with location and timezone settings
                 context = browser.new_context(
-                    **p.devices[device],
                     locale='en-US',
                     timezone_id=location['timezone'],
                     geolocation={
                         "latitude": location['latitude'],
                         "longitude": location['longitude']
                     },
-                    permissions=['geolocation']
+                    permissions=['geolocation'],
+                    user_agent=user_agent,
+                    viewport={'width': 1920, 'height': 1080}
                 )
-                
-                # 设置HTTP头
-                context.set_extra_http_headers({
-                    "Accept-Language": "en-US,en;q=0.9",
-                    "User-Agent": user_agent
-                })
                 
                 page = context.new_page()
 
@@ -186,7 +165,7 @@ class WebHostLoginChecker:
                     while retry_count < 3:
                         try:
                             result = self.attempt_login(page, email, password, location)
-                            msg = f"✅ 账号 {email} ({device}): {result}"
+                            msg = f"✅ Account {email}: {result}"
                             logging.info(msg)
                             return msg
                         except Exception as e:
@@ -194,10 +173,10 @@ class WebHostLoginChecker:
                             retry_count += 1
                             if retry_count < 3:
                                 wait_time = 4 * (2 ** (retry_count - 1))
-                                logging.warning(f"第 {retry_count} 次尝试失败，等待 {wait_time} 秒后重试...")
+                                logging.warning(f"Attempt {retry_count} failed, waiting {wait_time} seconds before retry...")
                                 time.sleep(wait_time)
                     
-                    msg = f"❌ 账号 {email} ({device}): 重试3次后失败 - {last_error}"
+                    msg = f"❌ Account {email}: Failed after 3 retries - {last_error}"
                     logging.error(msg)
                     return msg
 
@@ -205,40 +184,40 @@ class WebHostLoginChecker:
                     browser.close()
 
         except Exception as e:
-            msg = f"❌ 账号 {email}: 意外错误 - {str(e)}"
+            msg = f"❌ Account {email}: Unexpected error - {str(e)}"
             logging.error(msg)
             return msg
 
 def parse_accounts(accounts_str: str) -> List[Tuple[str, str]]:
-    """解析账号字符串为列表"""
+    """Parse accounts string into list"""
     if not accounts_str:
         return []
     return [tuple(account.split(':')) for account in accounts_str.split()]
 
 def main():
-    # 获取环境变量
+    # Get environment variables
     accounts_str = os.environ.get('WEBHOST', '')
     bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
     chat_id = os.environ.get('TELEGRAM_CHAT_ID')
 
-    # 验证环境变量
+    # Validate environment variables
     if not all([accounts_str, bot_token, chat_id]):
-        error_msg = "缺少必要的环境变量配置"
+        error_msg = "Missing required environment variables"
         logging.error(error_msg)
         return
 
-    # 初始化组件
+    # Initialize components
     telegram = TelegramNotifier(bot_token, chat_id)
     checker = WebHostLoginChecker(headless=True)
     accounts = parse_accounts(accounts_str)
 
     if not accounts:
-        error_msg = "未配置任何账号"
+        error_msg = "No accounts configured"
         logging.warning(error_msg)
         telegram.send_message(error_msg)
         return
 
-    # 检查所有账号登录状态
+    # Check all account logins
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     login_statuses = []
     
@@ -246,16 +225,16 @@ def main():
         status = checker.check_login(email, password)
         login_statuses.append(status)
 
-    # 发送报告到Telegram
-    message = f"*WebHost登录状态检查*\n"
-    message += f"_时间: {timestamp}_\n\n"
+    # Send report to Telegram
+    message = f"*WebHost Login Status Check*\n"
+    message += f"_Time: {timestamp}_\n\n"
     message += "\n".join(login_statuses)
     
     result = telegram.send_message(message)
     if "error" in result:
-        logging.error(f"发送Telegram通知失败: {result['error']}")
+        logging.error(f"Failed to send Telegram notification: {result['error']}")
     else:
-        logging.info("Telegram通知发送成功")
+        logging.info("Telegram notification sent successfully")
 
 if __name__ == "__main__":
     main()
