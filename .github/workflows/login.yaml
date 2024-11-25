@@ -3,7 +3,7 @@ name: Run Login Script
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 0 1,15 * *"  # 每月1号运行一次
+    - cron: "0 0 */3 * *"  # 每月1号运行一次
   push:
     branches:
       - main
@@ -15,7 +15,14 @@ jobs:
     steps:
       - name: Checkout 仓库代码
         uses: actions/checkout@v2
-        
+     
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright
+          restore-keys: ${{ runner.os }}-playwright
+      
       - name: 安装 Playwright 所需依赖
         run: |
           npx playwright install-deps
