@@ -57,6 +57,28 @@ US_LOCATIONS = [
     }
 ]
 
+# Desktop browser configurations
+DESKTOP_CONFIGS = [
+    {
+        "os": "Windows",
+        "chrome_version": "119.0.0.0",
+        "platform": "Windows NT 10.0; Win64; x64",
+        "resolution": {"width": 1920, "height": 1080}
+    },
+    {
+        "os": "macOS",
+        "chrome_version": "119.0.0.0", 
+        "platform": "Macintosh; Intel Mac OS X 10_15_7",
+        "resolution": {"width": 1680, "height": 1050}
+    },
+    {
+        "os": "Windows",
+        "chrome_version": "118.0.0.0",
+        "platform": "Windows NT 10.0; Win64; x64",
+        "resolution": {"width": 1366, "height": 768}
+    }
+]
+
 class TelegramNotifier:
     def __init__(self, bot_token: str, chat_id: str):
         self.bot_token = bot_token
@@ -83,23 +105,22 @@ class WebHostLoginChecker:
         self.headless = headless
         self.login_url = "https://webhostmost.com/login"
         self.dashboard_url = "https://webhostmost.com/clientarea.php"
-        
+
     def get_random_location(self):
         """Get a random US location"""
         return random.choice(US_LOCATIONS)
 
-    def get_us_user_agent(self):
-        """Generate a US user agent string"""
-        versions = ["115", "116", "117"]
-        platforms = ["Windows NT 10.0", "Macintosh; Intel Mac OS X 10_15_7"]
-        
-        platform = random.choice(platforms)
-        version = random.choice(versions)
-        
-        return f"Mozilla/5.0 ({platform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{version}.0.0.0 Safari/537.36"
+    def get_random_desktop_config(self):
+        """Get a random desktop configuration"""
+        config = random.choice(DESKTOP_CONFIGS)
+        return {
+            "user_agent": f"Mozilla/5.0 ({config['platform']}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{config['chrome_version']} Safari/537.36",
+            "viewport": config["resolution"],
+            "os": config["os"]
+        }
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-    def attempt_login(self, page, email: str, password: str, location: dict) -> str:
+    def attempt_login(self, page, email: str, password: str, location: dict, desktop_info: dict) -> str:
         """Single login attempt"""
         try:
             # Navigate to login page
@@ -124,7 +145,7 @@ class WebHostLoginChecker:
             if not page.url.startswith(self.dashboard_url):
                 raise Exception("Failed to reach dashboard page")
 
-            return f"Login successful (from {location['city']}, {location['state']})"
+            return f"Login successful (from {location['city']}, {location['state']} using {desktop_info['os']})"
 
         except PlaywrightTimeout as e:
             raise Exception(f"Page response timeout: {str(e)}")
@@ -132,18 +153,18 @@ class WebHostLoginChecker:
             raise Exception(f"Login failed: {str(e)}")
 
     def check_login(self, email: str, password: str) -> str:
-        """Check login using US geolocation"""
+        """Check login using desktop browser with US geolocation"""
         location = self.get_random_location()
-        user_agent = self.get_us_user_agent()
+        desktop_config = self.get_random_desktop_config()
         
-        logging.info(f"Simulating location: {location['city']}, {location['state']}")
+        logging.info(f"Using {desktop_config['os']} from {location['city']}, {location['state']}")
 
         try:
             with sync_playwright() as p:
-                # Launch browser (using Chromium instead of Firefox for better compatibility)
+                # Launch browser (using Chromium for better compatibility)
                 browser = p.chromium.launch(headless=self.headless)
                 
-                # Create context with location and timezone settings
+                # Create context with desktop configuration
                 context = browser.new_context(
                     locale='en-US',
                     timezone_id=location['timezone'],
@@ -152,8 +173,8 @@ class WebHostLoginChecker:
                         "longitude": location['longitude']
                     },
                     permissions=['geolocation'],
-                    user_agent=user_agent,
-                    viewport={'width': 1920, 'height': 1080}
+                    user_agent=desktop_config['user_agent'],
+                    viewport=desktop_config['viewport']
                 )
                 
                 page = context.new_page()
@@ -164,7 +185,7 @@ class WebHostLoginChecker:
                     
                     while retry_count < 3:
                         try:
-                            result = self.attempt_login(page, email, password, location)
+                            result = self.attempt_login(page, email, password, location, desktop_config)
                             msg = f"✅ Account {email}: {result}"
                             logging.info(msg)
                             return msg
@@ -224,6 +245,10 @@ def main():
     for email, password in accounts:
         status = checker.check_login(email, password)
         login_statuses.append(status)
+        # Add random delay between checks
+        if email != accounts[-1][0]:  # Don't delay after last account
+            delay = random.uniform(3, 8)
+            time.sleep(delay)
 
     # Send report to Telegram
     message = f"*WebHost Login Status Check*\n"
