@@ -39,7 +39,7 @@ def attempt_login(page, email: str, password: str) -> Tuple[bool, str]:
     """
     try:
         # 导航到登录页面
-        page.goto("https://webhostmost.com/login")
+        page.goto("https://client.webhostmost.com/login")
         
         # 填写登录表单
         page.get_by_placeholder("Enter email").click()
