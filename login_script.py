@@ -40,6 +40,39 @@ def send_telegram_message(message: str) -> dict:
         logging.error(f"发送Telegram消息时发生错误: {e}")
         return {"ok": False, "description": str(e)}
 
+def wait_for_cloudflare(page, max_wait_time=60):
+    """
+    等待Cloudflare验证通过
+    """
+    start_time = time.time()
+    while time.time() - start_time < max_wait_time:
+        try:
+            # 检查是否存在Cloudflare验证页面的特征
+            if page.locator("h1:has-text('Just a moment')").count() > 0:
+                logging.info("等待Cloudflare验证通过...")
+                time.sleep(2)
+                continue
+                
+            # 检查登录表单是否可见
+            if page.locator("input[placeholder='Enter email']").is_visible():
+                logging.info("Cloudflare验证已通过")
+                return True
+                
+            # 等待页面加载完成
+            page.wait_for_load_state("networkidle", timeout=5000)
+            if page.url == "https://client.webhostmost.com/login":
+                if page.locator("input[placeholder='Enter email']").is_visible():
+                    logging.info("Cloudflare验证已通过")
+                    return True
+            
+        except Exception as e:
+            logging.debug(f"等待过程中的正常异常: {e}")
+            time.sleep(2)
+            continue
+            
+    logging.error("等待Cloudflare验证超时")
+    return False
+
 def attempt_single_login(email: str, password: str) -> tuple[bool, str]:
     """
     单次登录尝试
@@ -89,10 +122,23 @@ def attempt_single_login(email: str, password: str) -> tuple[bool, str]:
 
             try:
                 # 导航到登录页面
-                page.goto("https://client.webhostmost.com/login", timeout=20000)
-                page.wait_for_load_state("networkidle", timeout=20000)
+                logging.info("正在访问登录页面...")
+                page.goto("https://client.webhostmost.com/login", timeout=30000)
+                
+                # 等待Cloudflare验证通过
+                if not wait_for_cloudflare(page):
+                    return False, "Cloudflare验证等待超时"
+                
+                # 确保页面完全加载
+                page.wait_for_load_state("networkidle", timeout=10000)
+                
+                # 等待登录表单可操作
+                logging.info("正在等待登录表单...")
+                page.locator("input[placeholder='Enter email']").wait_for(state="visible", timeout=10000)
+                time.sleep(2)  # 额外等待以确保表单完全可交互
 
                 # 填写登录表单
+                logging.info("正在填写登录信息...")
                 page.get_by_placeholder("Enter email").fill(email)
                 page.get_by_placeholder("Password").fill(password)
                 page.get_by_role("button", name="Login").click()
