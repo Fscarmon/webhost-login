@@ -59,7 +59,7 @@ def attempt_login(page, email: str, password: str) -> Tuple[bool, str]:
         except TimeoutError:
             # 检查是否成功重定向到仪表板
             try:
-                page.wait_for_url("https://webhostmost.com/clientarea.php", timeout=5000)
+                page.wait_for_url("https://client.webhostmost.com/clientarea.php", timeout=5000)
                 return True, "登录成功！"
             except TimeoutError:
                 return False, "登录失败：无法重定向到仪表板"
