@@ -140,7 +140,9 @@ def attempt_single_login(email: str, password: str) -> tuple[bool, str]:
                 # 填写登录表单
                 logging.info("正在填写登录信息...")
                 page.get_by_placeholder("Enter email").fill(email)
+                time.sleep(2)
                 page.get_by_placeholder("Password").fill(password)
+                time.sleep(2)
                 page.get_by_role("button", name="Login").click()
 
                 # 检查登录结果
@@ -154,7 +156,7 @@ def attempt_single_login(email: str, password: str) -> tuple[bool, str]:
                         return True, "登录成功!"
                     except TimeoutError:
                         try:
-                            page.locator("text=Welcome, ").wait_for(timeout=5000)
+                            page.locator("text=Client Area, ").wait_for(timeout=5000)
                             return True, "登录成功!"
                         except TimeoutError:
                             return False, "登录失败：无法检测登录状态"
