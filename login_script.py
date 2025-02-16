@@ -218,7 +218,6 @@ def attempt_login(context: BrowserContext, email: str, password: str) -> Tuple[b
         return False, f"登录尝试失败 (一般错误): {str(e)}"
 
 
-
 # ... login_webhost 函数 (与之前相同，但要调整 launch_options) ...
 def login_webhost(email: str, password: str, max_retries: int = 5) -> str:
     """
@@ -286,7 +285,7 @@ def login_webhost(email: str, password: str, max_retries: int = 5) -> str:
 
                 # 2.  尝试登录
                 success, message = attempt_login(context, email, password)
-                context.close() # 关闭浏览器上下文, 释放资源
+
                 if success:
                     logging.info(f"账户 {email} 登录成功（第 {attempt + 1}/{max_retries} 次尝试）")
                     return f"账户 {email} - {message}（第 {attempt + 1}/{max_retries} 次尝试）"
@@ -301,12 +300,12 @@ def login_webhost(email: str, password: str, max_retries: int = 5) -> str:
             finally:
                 # 在每次尝试结束时，尝试关闭浏览器和上下文，以释放资源
                 try:
-                    if 'browser' in locals():
-                        browser.close()
-                        logging.debug("浏览器已关闭")
+                    if 'context' in locals():
+                        context.close()
+                        logging.debug("浏览器上下文已关闭")
                 except Exception as e:
-                    logging.error(f"关闭浏览器时发生错误: {e}")
-
+                    logging.error(f"关闭浏览器上下文时发生错误: {e}")
+        browser.close()  #  在所有重试之后，关闭浏览器
         return f"账户 {email} - 所有 {max_retries} 次尝试均失败。"  # 所有重试都失败
 
 
