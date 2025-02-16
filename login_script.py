@@ -1,4 +1,4 @@
-from playwright.sync_api import sync_playwright, TimeoutError, Page
+from playwright.sync_api import sync_playwright, TimeoutError, Page, Browser
 import os
 import requests
 import time
@@ -8,10 +8,11 @@ import random
 import logging
 from dotenv import load_dotenv
 from base64 import b64encode  # 用于截图的base64编码
-from playwright.sync_api import Browser, BrowserContext  # 导入 Browser 和 BrowserContext
 from PIL import Image  #  图像处理
 import pytesseract  # OCR  (需要安装 Tesseract OCR 引擎和 pytesseract 库)
 from io import BytesIO
+from user_agent import generate_user_agent  #  用于生成 User-Agent
+from playwright.sync_api import BrowserContext # 导入 BrowserContext
 
 # 加载 .env 文件中的环境变量 (如果存在)
 load_dotenv()
@@ -94,17 +95,23 @@ def solve_cloudflare_challenge(page: Page) -> bool:
         # 2. 检查是否存在 “I am human” 复选框，尝试自动选择
         if page.locator("input[type='checkbox']").count() > 0:  #  使用通用的复选框选择器
             logging.warning("检测到 Cloudflare 人机验证 (I am human 复选框)。 尝试自动选择...")
+            #  2.1 尝试滚动到复选框 (如果需要)
             try:
-                #  等待复选框可见
+                page.locator("input[type='checkbox']").scroll_into_view_if_needed()
+            except Exception as e:
+                logging.warning(f"滚动到复选框时发生错误: {e}")
+                pass
+            try:
+                #  2.2 等待复选框可见
                 page.locator("input[type='checkbox']").wait_for(state="visible", timeout=10000)
-                #  尝试点击 "I am human" 复选框 (使用通用选择器)
+                #  2.3 尝试点击 "I am human" 复选框 (使用通用选择器)
                 page.locator("input[type='checkbox']").click(timeout=5000)
                 #  等待复选框被选中，并处理可能的后续页面变化。
                 try:
-                     page.wait_for_load_state("networkidle", timeout=20000)  # 等待页面加载完毕
-                     if page.url == "https://client.webhostmost.com/login":  # 重定向到登录页面，说明解决了
-                         logging.info("Cloudflare 人机验证 (复选框) 已自动解决。")
-                         return True
+                    page.wait_for_load_state("networkidle", timeout=20000)  # 等待页面加载完毕， 增加超时时间
+                    if page.url == "https://client.webhostmost.com/login":  # 重定向到登录页面，说明解决了
+                        logging.info("Cloudflare 人机验证 (复选框) 已自动解决。")
+                        return True
 
                 except TimeoutError:
                     logging.warning("点击复选框后，页面加载超时，可能需要手动解决。")
@@ -134,12 +141,16 @@ def solve_cloudflare_challenge(page: Page) -> bool:
         logging.error(f"解决 Cloudflare 验证码时发生错误: {e}")
         return False
 
-def attempt_login(page, email: str, password: str) -> Tuple[bool, str]:
+
+def attempt_login(context: BrowserContext, email: str, password: str) -> Tuple[bool, str]:
     """
-    尝试登录WebHost账户，并处理 Cloudflare 验证。
+    尝试登录WebHost账户，并处理 Cloudflare 验证。 每次使用新指纹
     """
     logging.info(f"尝试登录账户: {email}")
     try:
+        # 创建新页面，使用 context
+        page = context.new_page()
+
         # 导航到登录页面，增加超时时间
         logging.debug(f"导航到登录页面: https://client.webhostmost.com/login")
         try:
@@ -150,7 +161,6 @@ def attempt_login(page, email: str, password: str) -> Tuple[bool, str]:
 
         #  尝试解决 Cloudflare 验证
         solve_cloudflare_challenge(page)
-
 
         #  确保页面已经加载完毕 (在解决 Cloudflare 验证之后)
         try:
@@ -193,110 +203,112 @@ def attempt_login(page, email: str, password: str) -> Tuple[bool, str]:
                     #      找到一个独特的元素或文本，用于判断。
                     # 示例：  假设登录成功后，页面上有用户名显示在某个元素中。
                     #        请根据实际情况修改这段代码
-                    page.locator("text=Client Area, ").wait_for(timeout=5000) #  比如用户名或者登录后的欢迎语
+                    page.locator("text=Welcome, ").wait_for(timeout=5000) #  比如用户名或者登录后的欢迎语
                     logging.info("登录成功 (页面内容检测)!")
                     return True, "登录成功 (页面内容检测)!"
                 except TimeoutError:
                     return False, "登录失败：无法重定向或检测页面内容变化"
+        finally: # 确保页面关闭
+            page.close()
+
 
     except TimeoutError as e:
         return False, f"登录超时：{str(e)}"
     except Exception as e:
         return False, f"登录尝试失败 (一般错误): {str(e)}"
 
+
+
 # ... login_webhost 函数 (与之前相同，但要调整 launch_options) ...
 def login_webhost(email: str, password: str, max_retries: int = 5) -> str:
     """
-    尝试使用重试机制登录WebHost账户
+    尝试使用重试机制登录WebHost账户，每次使用新的指纹，模拟浏览器
     """
     logging.info(f"开始登录账户 {email}, 最大重试次数: {max_retries}")
     proxy_urls_str = os.environ.get("PROXY_URLS")
 
     with sync_playwright() as p:
-        launch_options = {
-            "headless": True,
-            "firefox_user_prefs": {  # 调整 Firefox 用户偏好设置，增强绕过验证的能力
-                "network.cookie.cookieBehavior": 0,  # 接受所有 cookie
-                "network.http.max-connections": 256,
-                "network.http.max-persistent-connections-per-proxy": 16,
-                "network.http.max-persistent-connections-per-server": 8,
-            }
-        }
-
-        if proxy_urls_str:
-            proxy_urls = [url.strip() for url in proxy_urls_str.split(';')]  # 分割代理URL, 去除空格
-            if proxy_urls:
-                # 随机选择一个代理
-                selected_proxy_url = random.choice(proxy_urls)
-                logging.info(f"使用随机选择的代理: {selected_proxy_url}")
-                try:
-                    # 解析代理 URL
-                    parsed_url = urllib.parse.urlparse(selected_proxy_url)
-
-                    # 检查URL是否有效.
-                    if parsed_url.scheme and parsed_url.netloc:
-                        # 获取用户名和密码
-                        if parsed_url.username is not None and parsed_url.password is not None:
-
-                            proxy_server = f"{parsed_url.scheme}://{parsed_url.netloc}"  # 构建server地址
-                            proxy_username = parsed_url.username
-                            proxy_password = parsed_url.password
-                            launch_options["proxy"] = {
-                                "server": proxy_server,
-                                "username": proxy_username,
-                                "password": proxy_password,
-                            }
-                            logging.info(f"使用代理服务器: {proxy_server}")
-                        else:
-                            logging.warning(f"代理URL格式错误，缺少用户名或密码: {selected_proxy_url}")
-                    else:
-                        logging.warning(f"代理URL格式错误: {selected_proxy_url}")
-
-                except Exception as e:
-                    logging.error(f"代理URL解析错误: {e}")
-            else:
-                logging.warning("未配置任何代理服务器.") # 没有分割出代理
-
-        else:
-            logging.info("未配置代理服务器, 将使用无代理连接")
-
-        try:
-            browser = p.firefox.launch(**launch_options)  #  使用 launch_options 启动浏览器
-        except Exception as e:
-            logging.error(f"启动浏览器失败: {e}")
-            return f"账户 {email} - 启动浏览器失败：{str(e)}"
-
-        page = browser.new_page()
-
-        attempt = 1
-        while attempt <= max_retries:
+        for attempt in range(max_retries):
             try:
-                success, message = attempt_login(page, email, password)
-                if success:
-                    logging.info(f"账户 {email} 登录成功（第 {attempt}/{max_retries} 次尝试）")
-                    return f"账户 {email} - {message}（第 {attempt}/{max_retries} 次尝试）"
+                # 1. 创建一个具有随机指纹的新浏览器上下文
+                browser = p.firefox.launch(
+                    headless=True,
+                    user_data_dir=f"user_data_{email}_{attempt}",  # 使用用户数据目录，模拟新用户
+                    firefox_user_prefs={  # 调整 Firefox 用户偏好设置，增强绕过验证的能力
+                        "network.cookie.cookieBehavior": 0,  # 接受所有 cookie
+                        "network.http.max-connections": 256,
+                        "network.http.max-persistent-connections-per-proxy": 16,
+                        "network.http.max-persistent-connections-per-server": 8,
+                    }
+                )
+                context = browser.new_context(
+                    user_agent=generate_user_agent(navigator="firefox"),
+                    #viewport={'width': 1920, 'height': 1080},  #  设置视口大小
+                    #locale="en-US",  #  设置语言
+                    #timezone_id="America/Los_Angeles",  #  设置时区
 
-                # 如果不成功且还有重试机会
-                if attempt < max_retries:
-                    logging.warning(f"账户 {email} 的第 {attempt}/{max_retries} 次重试：{message}")
-                    time.sleep(2 * attempt)  # 指数退避
+                )
+
+                if proxy_urls_str:
+                    proxy_urls = [url.strip() for url in proxy_urls_str.split(';')]  # 分割代理URL, 去除空格
+                    if proxy_urls:
+                        # 随机选择一个代理
+                        selected_proxy_url = random.choice(proxy_urls)
+                        logging.info(f"使用随机选择的代理: {selected_proxy_url}")
+                        try:
+                            # 解析代理 URL
+                            parsed_url = urllib.parse.urlparse(selected_proxy_url)
+
+                            # 检查URL是否有效.
+                            if parsed_url.scheme and parsed_url.netloc:
+                                # 获取用户名和密码
+                                if parsed_url.username is not None and parsed_url.password is not None:
+
+                                    proxy_server = f"{parsed_url.scheme}://{parsed_url.netloc}"  # 构建server地址
+                                    proxy_username = parsed_url.username
+                                    proxy_password = parsed_url.password
+                                    context.set_extra_http_headers({"Proxy-Authorization": f"Basic {b64encode(f'{proxy_username}:{proxy_password}'.encode()).decode()}"})
+                                    context.set_default_proxy({
+                                        "server": proxy_server
+                                    })
+
+                                    logging.info(f"使用代理服务器: {proxy_server}")
+                                else:
+                                    logging.warning(f"代理URL格式错误，缺少用户名或密码: {selected_proxy_url}")
+                            else:
+                                logging.warning(f"代理URL格式错误: {selected_proxy_url}")
+
+                        except Exception as e:
+                            logging.error(f"代理URL解析错误: {e}")
                 else:
-                    logging.error(f"账户 {email} - 所有 {max_retries} 次尝试均失败。最后错误：{message}")
-                    return f"账户 {email} - 所有 {max_retries} 次尝试均失败。最后错误：{message}"
+                    logging.info("未配置代理服务器, 将使用无代理连接")
 
+
+                # 2.  尝试登录
+                success, message = attempt_login(context, email, password)
+                browser.close() # 关闭浏览器, 释放资源
+                if success:
+                    logging.info(f"账户 {email} 登录成功（第 {attempt + 1}/{max_retries} 次尝试）")
+                    return f"账户 {email} - {message}（第 {attempt + 1}/{max_retries} 次尝试）"
+                else:
+                    logging.warning(f"账户 {email} 的第 {attempt + 1}/{max_retries} 次重试：{message}")
+                    time.sleep(2 * (attempt + 1))  # 指数退避
             except Exception as e:
-                logging.error(f"账户 {email} 在第 {attempt} 次尝试时发生错误: {e}")
-                if attempt == max_retries:
+                logging.error(f"账户 {email} 在第 {attempt + 1} 次尝试时发生错误: {e}")
+                if attempt == max_retries - 1:
                     logging.error(f"账户 {email} - {max_retries} 次尝试后发生致命错误：{str(e)}")
                     return f"账户 {email} - {max_retries} 次尝试后发生致命错误：{str(e)}"
-
-            finally:  # 确保浏览器关闭
+            finally:
+                # 在每次尝试结束时，尝试关闭浏览器和上下文，以释放资源
                 try:
-                    browser.close()
-                    logging.debug("浏览器已关闭")
+                    if 'browser' in locals() and browser.is_connected():  # 检查 browser 是否存在且已连接
+                        browser.close()
+                        logging.debug("浏览器已关闭")
                 except Exception as e:
                     logging.error(f"关闭浏览器时发生错误: {e}")
-            attempt += 1
+
+        return f"账户 {email} - 所有 {max_retries} 次尝试均失败。"  # 所有重试都失败
+
 
 def main():
     # 从环境变量获取账户信息
