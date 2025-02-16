@@ -7,9 +7,11 @@ import urllib.parse
 import random
 import logging
 from dotenv import load_dotenv
-from base64 import b64encode #  用于截图的base64编码
+from base64 import b64encode  # 用于截图的base64编码
 from playwright.sync_api import Browser, BrowserContext  # 导入 Browser 和 BrowserContext
-
+from PIL import Image  #  图像处理
+import pytesseract  # OCR  (需要安装 Tesseract OCR 引擎和 pytesseract 库)
+from io import BytesIO
 
 # 加载 .env 文件中的环境变量 (如果存在)
 load_dotenv()
@@ -24,9 +26,9 @@ logging.basicConfig(
 )
 
 #  ... send_telegram_message 函数 (与之前相同) ...
-def send_telegram_message(message: str, screenshot_path: str = None) -> dict:
+def send_telegram_message(message: str, screenshot_path: str = None, reply_markup=None) -> dict:  #  添加 reply_markup 参数
     """
-    使用bot API发送Telegram消息，可以选择附带截图
+    使用bot API发送Telegram消息，可以选择附带截图，并且可以包含内联键盘 (reply_markup)
     """
     bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
     chat_id = os.environ.get('TELEGRAM_CHAT_ID')
@@ -39,8 +41,10 @@ def send_telegram_message(message: str, screenshot_path: str = None) -> dict:
     payload = {
         "chat_id": chat_id,
         "text": message,
-        "parse_mode": "Markdown"
+        "parse_mode": "Markdown",
+        "reply_markup": reply_markup  #  添加 reply_markup 到 payload 中
     }
+
     try:
         response = requests.post(url, json=payload)
         response.raise_for_status()  # 检查HTTP错误
@@ -62,7 +66,6 @@ def send_telegram_message(message: str, screenshot_path: str = None) -> dict:
             photo_response.raise_for_status()
             logging.info("截图已发送到Telegram")
 
-
         return response.json()
 
     except requests.exceptions.RequestException as e:
@@ -75,40 +78,53 @@ def send_telegram_message(message: str, screenshot_path: str = None) -> dict:
 
 def solve_cloudflare_challenge(page: Page) -> bool:
     """
-    尝试解决 Cloudflare 人机验证
+    尝试解决 Cloudflare 人机验证。 包含自动处理和半自动的 Telegram 交互。
+    专为处理 “I am human” 复选框设计.
     """
     try:
-        #  查找 Cloudflare 挑战页面元素的示例.  **根据实际页面结构修改！**
-        #  Cloudflare 挑战通常会有一个 "checking"  或者 "please wait" 的页面
-        #  或者一个 “I am human”的复选框
-
-        # 检查是否出现了 Cloudflare 挑战页面
-        if page.locator("h1:has-text('Just a moment')").count() > 0:  #  **修改：根据页面实际情况修改选择器**
-            logging.warning("检测到 Cloudflare 人机验证 (Just a moment)。 尝试等待自动解决...")
-
-            #  Cloudflare 有时会自动解决，等待一段时间
-            page.wait_for_load_state("networkidle", timeout=20000) # 稍微延长等待时间
-            time.sleep(5) # 额外等待
-            if page.url == "https://client.webhostmost.com/login":  # 如果重定向回登录页，说明解决了
-                logging.info("Cloudflare 人机验证已自动解决。")
-                return True # 自动解决了
-            else:
-                logging.warning("Cloudflare 人机验证未自动解决。")
-                return False  # 没有自动解决
-
-        # 检查是否存在 “I am human” 复选框 (示例, 请根据实际页面元素修改)
-        #  Cloudflare 可能会出现 "I am human"  的复选框
-        if page.locator("#challenge-form").count() > 0:  #  **修改：根据页面实际情况修改选择器**
-            logging.warning("检测到 Cloudflare 人机验证 (I am human 复选框)。 尝试手动解决...")
+        # 1. 检查是否出现了 Cloudflare 验证页面 (Just a moment) - 仍然保留，以防万一
+        if page.locator("h1:has-text('Just a moment')").count() > 0:
+            logging.warning("检测到 Cloudflare 验证页面 (Just a moment)。")
             screenshot_path = "cloudflare_challenge.png"
             page.screenshot(path=screenshot_path)
-            message = "Cloudflare 人机验证需要手动解决。 请查看截图并解决验证码，然后继续。 请手动解决后，重新运行脚本。"
+            message = "Cloudflare 人机验证 (Just a moment) 页面出现，可能需要手动解决。请查看截图，手动解决后，手动重新运行脚本。"
             send_telegram_message(message, screenshot_path)
-            #  暂停程序执行，等待用户手动解决。  请在 shell 中执行
-            input("请解决验证码，然后按 Enter 继续...")
-            return True #  手动解决后，认为可以继续尝试
+            return False  # 立即返回，需要用户手动解决，并重新运行脚本
 
-        # 如果没有找到以上元素，也认为没有验证码，直接返回 True
+        # 2. 检查是否存在 “I am human” 复选框，尝试自动选择
+        if page.locator("input[type='checkbox']").count() > 0:  #  使用通用的复选框选择器
+            logging.warning("检测到 Cloudflare 人机验证 (I am human 复选框)。 尝试自动选择...")
+            try:
+                #  尝试点击 "I am human" 复选框 (使用通用选择器)
+                page.locator("input[type='checkbox']").click(timeout=5000)
+
+                #  等待复选框被选中，并处理可能的后续页面变化。
+                try:
+                     page.wait_for_load_state("networkidle", timeout=10000)  # 等待页面加载完毕
+                     if page.url == "https://client.webhostmost.com/login":  # 重定向到登录页面，说明解决了
+                         logging.info("Cloudflare 人机验证 (复选框) 已自动解决。")
+                         return True
+
+                except TimeoutError:
+                    logging.warning("点击复选框后，页面加载超时，可能需要手动解决。")
+                    screenshot_path = "cloudflare_challenge.png"
+                    page.screenshot(path=screenshot_path)
+                    message = "Cloudflare 人机验证 (复选框)  自动选择后，页面加载超时，可能需要手动解决。 请查看截图，手动解决后，重新运行脚本。"
+                    send_telegram_message(message, screenshot_path)
+                    # 自动点击失败，但是不返回False，而是继续。
+
+                logging.info("Cloudflare 人机验证 (复选框) 已自动解决。")
+                return True # 复选框点击成功，并且页面状态检测也成功
+
+            except Exception as e:
+                logging.error(f"尝试自动选择复选框时发生错误: {e}")
+                screenshot_path = "cloudflare_challenge.png"
+                page.screenshot(path=screenshot_path)
+                message = f"尝试自动选择复选框时发生错误: {e}。  可能需要手动解决。 请查看截图，手动解决后，重新运行脚本。"
+                send_telegram_message(message, screenshot_path)
+                # 自动点击失败，但是不返回False，而是继续。
+
+        # 3.  如果以上都没有检测到，也认为没有验证码，直接返回 True
         logging.debug("未检测到 Cloudflare 挑战，或已自动通过。")
         return True
 
@@ -123,13 +139,24 @@ def attempt_login(page, email: str, password: str) -> Tuple[bool, str]:
     """
     logging.info(f"尝试登录账户: {email}")
     try:
-        # 导航到登录页面
+        # 导航到登录页面，增加超时时间
         logging.debug(f"导航到登录页面: https://client.webhostmost.com/login")
-        page.goto("https://client.webhostmost.com/login", timeout=10000)
+        try:
+            page.goto("https://client.webhostmost.com/login", timeout=20000) # 增加超时时间
+        except TimeoutError as e:
+            logging.error(f"导航到登录页面超时: {e}")
+            return False, f"登录失败：导航超时"
 
         #  尝试解决 Cloudflare 验证
-        if not solve_cloudflare_challenge(page):
-            return False, "登录失败：无法解决 Cloudflare 验证"
+        solve_cloudflare_challenge(page)
+
+
+        #  确保页面已经加载完毕 (在解决 Cloudflare 验证之后)
+        try:
+            page.wait_for_load_state("networkidle", timeout=20000) # 确保页面完全加载
+        except TimeoutError as e:
+            logging.error(f"页面加载超时 (解决 Cloudflare 验证后): {e}")
+            return False, "登录失败: 页面加载超时 (解决 Cloudflare 验证后)"
 
         # 填写登录表单
         logging.debug(f"填写电子邮件地址: {email}")
