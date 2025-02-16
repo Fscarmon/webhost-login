@@ -228,24 +228,24 @@ def login_webhost(email: str, password: str, max_retries: int = 5) -> str:
     proxy_urls_str = os.environ.get("PROXY_URLS")
 
     with sync_playwright() as p:
+        browser = p.firefox.launch(headless=True,
+           firefox_user_prefs={  # 调整 Firefox 用户偏好设置，增强绕过验证的能力
+                "network.cookie.cookieBehavior": 0,  # 接受所有 cookie
+                "network.http.max-connections": 256,
+                "network.http.max-persistent-connections-per-proxy": 16,
+                "network.http.max-persistent-connections-per-server": 8,
+            }
+        )  # 启动浏览器，只启动一次
+
         for attempt in range(max_retries):
             try:
                 # 1. 创建一个具有随机指纹的新浏览器上下文
-                browser = p.firefox.launch(
-                    headless=True,
-                    user_data_dir=f"user_data_{email}_{attempt}",  # 使用用户数据目录，模拟新用户
-                    firefox_user_prefs={  # 调整 Firefox 用户偏好设置，增强绕过验证的能力
-                        "network.cookie.cookieBehavior": 0,  # 接受所有 cookie
-                        "network.http.max-connections": 256,
-                        "network.http.max-persistent-connections-per-proxy": 16,
-                        "network.http.max-persistent-connections-per-server": 8,
-                    }
-                )
                 context = browser.new_context(
                     user_agent=generate_user_agent(navigator="firefox"),
-                    #viewport={'width': 1920, 'height': 1080},  #  设置视口大小
-                    #locale="en-US",  #  设置语言
-                    #timezone_id="America/Los_Angeles",  #  设置时区
+                    user_data_dir=f"user_data_{email}_{attempt}", # 使用新的用户数据目录
+                    viewport={'width': 1920, 'height': 1080},  #  设置视口大小
+                    locale="en-US",  #  设置语言
+                    timezone_id="America/Los_Angeles",  #  设置时区
 
                 )
 
@@ -286,7 +286,7 @@ def login_webhost(email: str, password: str, max_retries: int = 5) -> str:
 
                 # 2.  尝试登录
                 success, message = attempt_login(context, email, password)
-                browser.close() # 关闭浏览器, 释放资源
+                context.close() # 关闭浏览器上下文, 释放资源
                 if success:
                     logging.info(f"账户 {email} 登录成功（第 {attempt + 1}/{max_retries} 次尝试）")
                     return f"账户 {email} - {message}（第 {attempt + 1}/{max_retries} 次尝试）"
@@ -301,7 +301,7 @@ def login_webhost(email: str, password: str, max_retries: int = 5) -> str:
             finally:
                 # 在每次尝试结束时，尝试关闭浏览器和上下文，以释放资源
                 try:
-                    if 'browser' in locals() and browser.is_connected():  # 检查 browser 是否存在且已连接
+                    if 'browser' in locals():
                         browser.close()
                         logging.debug("浏览器已关闭")
                 except Exception as e:
