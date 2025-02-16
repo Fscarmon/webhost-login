@@ -95,12 +95,13 @@ def solve_cloudflare_challenge(page: Page) -> bool:
         if page.locator("input[type='checkbox']").count() > 0:  #  使用通用的复选框选择器
             logging.warning("检测到 Cloudflare 人机验证 (I am human 复选框)。 尝试自动选择...")
             try:
+                #  等待复选框可见
+                page.locator("input[type='checkbox']").wait_for(state="visible", timeout=10000)
                 #  尝试点击 "I am human" 复选框 (使用通用选择器)
                 page.locator("input[type='checkbox']").click(timeout=5000)
-
                 #  等待复选框被选中，并处理可能的后续页面变化。
                 try:
-                     page.wait_for_load_state("networkidle", timeout=10000)  # 等待页面加载完毕
+                     page.wait_for_load_state("networkidle", timeout=20000)  # 等待页面加载完毕
                      if page.url == "https://client.webhostmost.com/login":  # 重定向到登录页面，说明解决了
                          logging.info("Cloudflare 人机验证 (复选框) 已自动解决。")
                          return True
@@ -192,7 +193,7 @@ def attempt_login(page, email: str, password: str) -> Tuple[bool, str]:
                     #      找到一个独特的元素或文本，用于判断。
                     # 示例：  假设登录成功后，页面上有用户名显示在某个元素中。
                     #        请根据实际情况修改这段代码
-                    page.locator("text=Welcome, ").wait_for(timeout=5000) #  比如用户名或者登录后的欢迎语
+                    page.locator("text=Client Area, ").wait_for(timeout=5000) #  比如用户名或者登录后的欢迎语
                     logging.info("登录成功 (页面内容检测)!")
                     return True, "登录成功 (页面内容检测)!"
                 except TimeoutError:
