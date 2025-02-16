@@ -135,6 +135,46 @@ def send_telegram_message(message: str, working_proxies: List[Proxy]) -> dict:
     )
     return response.json()
 
+def attempt_login(page, email: str, password: str) -> Tuple[bool, str]:
+    """
+    尝试登录WebHost账户
+    
+    参数:
+        page: Playwright页面对象
+        email: 用户邮箱
+        password: 用户密码
+    返回:
+        Tuple[bool, str]: (成功状态, 消息)
+    """
+    try:
+        # 导航到登录页面
+        page.goto("https://webhostmost.com/login")
+        
+        # 填写登录表单
+        page.get_by_placeholder("Enter email").click()
+        page.get_by_placeholder("Enter email").fill(email)
+        page.get_by_placeholder("Password").click()
+        page.get_by_placeholder("Password").fill(password)
+        
+        # 提交登录表单
+        page.get_by_role("button", name="Login").click()
+        
+        # 检查错误消息
+        try:
+            error_message = page.wait_for_selector('.MuiAlert-message', timeout=5000)
+            if error_message:
+                error_text = error_message.inner_text()
+                return False, f"登录失败：{error_text}"
+        except TimeoutError:
+            # 检查是否成功重定向到仪表板
+            try:
+                page.wait_for_url("https://webhostmost.com/clientarea.php", timeout=5000)
+                return True, "登录成功！"
+            except TimeoutError:
+                return False, "登录失败：无法重定向到仪表板"
+    except Exception as e:
+        return False, f"登录尝试失败：{str(e)}"
+
 def login_webhost(email: str, password: str, working_proxies: List[Proxy], max_retries: int = 5) -> str:
     """
     使用可用代理尝试登录WebHost账户
@@ -188,9 +228,36 @@ def login_webhost(email: str, password: str, working_proxies: List[Proxy], max_r
         
         browser.close()
 
-def attempt_login(page, email: str, password: str) -> Tuple[bool, str]:
-    """登录尝试功能保持不变"""
-    # ... (保持原有代码不变)
+def parse_accounts(accounts_str: str) -> List[Tuple[str, str]]:
+    """
+    解析账户信息字符串
+    
+    参数:
+        accounts_str: 格式为 "email1:pass1 email2:pass2" 的字符串
+    返回:
+        List[Tuple[str, str]]: 账户列表，每个元素为 (email, password)
+    """
+    accounts = []
+    if not accounts_str:
+        return accounts
+        
+    for account in accounts_str.strip().split():
+        try:
+            if ':' not in account:
+                print(f"跳过格式错误的账户配置: {account}")
+                continue
+                
+            email, password = account.split(':', 1)  # 只在第一个:处分割
+            if not email or not password:
+                print(f"跳过空邮箱或密码的账户配置: {account}")
+                continue
+                
+            accounts.append((email.strip(), password.strip()))
+        except Exception as e:
+            print(f"解析账户配置时出错: {account}, 错误: {str(e)}")
+            continue
+            
+    return accounts
 
 if __name__ == "__main__":
     # 获取并测试代理
@@ -203,23 +270,30 @@ if __name__ == "__main__":
         working_proxies = []
         print("未配置代理，将使用直接连接")
     
-    # 从环境变量获取账户信息
-    accounts = os.environ.get('WEBHOST', '').split()
+    # 从环境变量获取并解析账户信息
+    accounts_str = os.environ.get('WEBHOST', '')
+    accounts = parse_accounts(accounts_str)
+    
+    if not accounts:
+        error_message = "未配置有效账户"
+        send_telegram_message(error_message, working_proxies)
+        print(error_message)
+        exit(1)
+        
     login_statuses = []
     
     # 处理每个账户
-    for account in accounts:
-        email, password = account.split(':')
-        status = login_webhost(email, password, working_proxies)
-        login_statuses.append(status)
-        print(status)
+    for email, password in accounts:
+        try:
+            status = login_webhost(email, password, working_proxies)
+            login_statuses.append(status)
+            print(status)
+        except Exception as e:
+            error_status = f"账户 {email} - 处理时发生错误: {str(e)}"
+            login_statuses.append(error_status)
+            print(error_status)
     
     # 发送结果到Telegram
-    if login_statuses:
-        message = "WEBHOST 登录状态：\n\n" + "\n".join(login_statuses)
-        result = send_telegram_message(message, working_proxies)
-        print("消息已发送到Telegram：", result)
-    else:
-        error_message = "未配置任何账户"
-        send_telegram_message(error_message, working_proxies)
-        print(error_message)
+    message = "WEBHOST 登录状态：\n\n" + "\n".join(login_statuses)
+    result = send_telegram_message(message, working_proxies)
+    print("消息已发送到Telegram：", result)
