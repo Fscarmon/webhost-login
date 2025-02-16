@@ -262,14 +262,13 @@ def login_webhost(email: str, password: str, max_retries: int = 5) -> str:
                     logging.error(f"账户 {email} - {max_retries} 次尝试后发生致命错误：{str(e)}")
                     return f"账户 {email} - {max_retries} 次尝试后发生致命错误：{str(e)}"
 
+            finally:  # 确保浏览器关闭
+                try:
+                    browser.close()
+                    logging.debug("浏览器已关闭")
+                except Exception as e:
+                    logging.error(f"关闭浏览器时发生错误: {e}")
             attempt += 1
-        finally:  # 确保浏览器关闭
-            try:
-                browser.close()
-                logging.debug("浏览器已关闭")
-            except Exception as e:
-                logging.error(f"关闭浏览器时发生错误: {e}")
-
 
 def main():
     # 从环境变量获取账户信息
