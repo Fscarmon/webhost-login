@@ -9,24 +9,39 @@ on:
 jobs:
   login:
     runs-on: ubuntu-22.04
+
     steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-      - name: Set up Python
-        uses: actions/setup-python@v3
-        with:
-          python-version: "3.9"
-      - name: Install dependencies
+      - name: Checkout 仓库代码
+        uses: actions/checkout@v2
+        
+      - name: 安装 Playwright 所需依赖
         run: |
-          pip install -r requirements.txt
-      - name: Set up WARP
+          npx playwright install-deps
+
+      - name: 设置 Python 环境
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.10'
+
+      - name: 安装python脚本所需依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install playwright aiofiles requests
+
+      - name: 安装 Playwright 浏览器
+        run: |
+          playwright install firefox
+          
+      - name: 创建WARP网络
         uses: fscarmen/warp-on-actions@v1.3
         with:
-          stack: dual
-          mode: wireguard
-      - name: Run login script
+           stack: dual        # Optional. Support [ ipv4, ipv6, dual ]. Default is dual.
+           mode: client    # Optional. Support [ wireguard, client ]. Default is wireguard.
+
+      - name: 运行自动化登录脚本
         env:
-          WEBHOST: ${{ secrets.WEBHOST }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python login_script.py
+          WEBHOST: ${{ secrets.WEBHOST }}
+        run: |
+          python login_script.py
