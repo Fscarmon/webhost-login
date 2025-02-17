@@ -5,29 +5,25 @@ on:
   schedule:
     - cron: '0 0 */10 * *' # 每10天运行一次
   workflow_dispatch:  # 允许手动运行
-    
+
 jobs:
   login:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v3
-        
       - name: Set up Python
         uses: actions/setup-python@v3
         with:
           python-version: "3.9"
-          
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          
-      - name: 创建WARP网络
-         uses: fscarmen/warp-on-actions@v1.3
-         with:
-           stack: dual        
-           mode: client
-           
+      - name: Set up WARP
+        uses: fscarmen/warp-on-actions@v1.3
+        with:
+          stack: dual        # Optional. Support [ ipv4, ipv6, dual ]. Default is dual.
+          mode: wireguard    # Optional. Support [ wireguard, client ]. Default is wireguard.
       - name: Run login script
         env:
           WEBHOST: ${{ secrets.WEBHOST }}
