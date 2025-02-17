@@ -19,12 +19,11 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-     - name: Set up WARP
-       uses: fscarmen/warp-on-actions@v1.3
-       with:
-         stack: dual        # Optional. Support [ ipv4, ipv6, dual ]. Default is dual.
-         mode: wireguard    # Optional. Support [ wireguard, client ]. Default is wireguard.
-      
+      - name: 创建WARP网络
+         uses: fscarmen/warp-on-actions@v1.3
+         with:
+           stack: dual        
+           mode: client
       - name: Run login script
         env:
           WEBHOST: ${{ secrets.WEBHOST }}
