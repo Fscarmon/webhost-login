@@ -32,7 +32,7 @@ jobs:
 
       - name: Install Playwright Browsers  # 安装浏览器
         run: |
-          playwright install
+          playwright install firefox
           
       - name: Set up WARP
         uses: fscarmen/warp-on-actions@v1.3
