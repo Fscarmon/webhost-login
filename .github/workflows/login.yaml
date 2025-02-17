@@ -8,7 +8,7 @@ on:
     
 jobs:
   login:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -19,11 +19,6 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-      - name: Set up WARP
-         uses: fscarmen/warp-on-actions@v1.3
-         with:
-            stack: dual        # Optional. Support [ ipv4, ipv6, dual ]. Default is dual.
-            mode: wireguard    # Optional. Support [ wireguard, client ]. Default is wireguard.
       - name: Run login script
         env:
           WEBHOST: ${{ secrets.WEBHOST }}
