@@ -10,7 +10,7 @@ on:
 
 jobs:
   login:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout 仓库代码
@@ -34,8 +34,6 @@ jobs:
       - name: Install Playwright Browsers  # 安装浏览器
         run: |
           playwright install
-          sudo apt update
-          sudo apt install openresolv libcurl4
           
       - name: Set up WARP
         uses: fscarmen/warp-on-actions@v1.3
